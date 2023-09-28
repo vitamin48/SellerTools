@@ -1,0 +1,59 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="UTF-8">
+    <title>Обработка файла Excel</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            margin: 20px;
+        }
+        h1 {
+            color: #333;
+        }
+        .container {
+            max-width: 400px;
+            margin: 0 auto;
+            padding: 20px;
+            border: 1px solid #ccc;
+            border-radius: 5px;
+            background-color: #f9f9f9;
+        }
+        .form-group {
+            margin-bottom: 10px;
+        }
+        .form-group label {
+            font-weight: bold;
+        }
+        .form-group input[type="file"] {
+            border: 1px solid #ccc;
+            padding: 8px;
+            width: 100%;
+        }
+        .form-group button {
+            background-color: #007bff;
+            color: #fff;
+            border: none;
+            padding: 10px 20px;
+            cursor: pointer;
+        }
+        .form-group button:hover {
+            background-color: #0056b3;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>Загрузите файл Excel</h1>
+        <form method="POST" enctype="multipart/form-data">
+            <div class="form-group">
+                <label for="file">Выберите файл:</label>
+                <input type="file" name="file" id="file" accept=".xlsx" required>
+            </div>
+            <div class="form-group">
+                <button type="submit">Обработать</button>
+            </div>
+        </form>
+    </div>
+</body>
+</html>
