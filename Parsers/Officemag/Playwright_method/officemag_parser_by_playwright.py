@@ -1,3 +1,8 @@
+from bs4 import BeautifulSoup
+import re
+import os
+import json
+import traceback
 import requests
 import datetime
 import time
@@ -40,6 +45,10 @@ def my_decorator(func):
 
 class ParserOfficeMag:
     def __init__(self):
+        self.links = []  # ссылки на товары, полученные из ссылок на каталоги
+        self.stocks = []
+        self.stocks_krasnoarmeyskaya = []
+        self.stocks_sovetskaya = []
         self.page = None
         self.context = None
         self.browser = None
@@ -76,9 +85,14 @@ class ParserOfficeMag:
             return bad_brand
 
     def read_login_from_txt(self):
-        with open('login.txt', 'r', encoding='utf-8') as file:
-            login = [f'{line}'.rstrip() for line in file]
-            return login
+        with open(f'{current_directory}\\login.txt', 'r', encoding='utf-8') as file:
+            rows = [f'{line}'.rstrip() for line in file]
+            return rows
+
+    def read_abc_catalogs(self):
+        with open(f'{current_directory}\\abc_catalogs.txt', 'r', encoding='utf-8') as file:
+            rows = [f'{line}'.rstrip() for line in file]
+            return rows
 
     def login(self):
         print(f'{bcolors.OKGREEN}login{bcolors.ENDC}')
@@ -90,11 +104,61 @@ class ParserOfficeMag:
         input_login = self.page.locator('#USER_LOGIN')
         # Вводим текст в поле ввода
         input_login.fill(login)
-        inpit_pass = self.page.locator('#USER_PASSWORD')
-        inpit_pass.fill(my_pass)
+        # Находим поле ввода USER_PASSWORD по его id
+        input_pass = self.page.locator('#USER_PASSWORD')
+        # Вводим пароль в поле ввода
+        input_pass.fill(my_pass)
+        # Находим кнопку Login и клик
         login_button = self.page.locator('[name="Login"]')
         login_button.click()
-        time.sleep(10)
+        time.sleep(1)
+
+    def get_abc_catalog(self):
+        self.page.goto('https://www.officemag.ru/catalog/abc/')
+        abc = self.page.locator('.catalogAlphabetList threeColumns')
+        print()
+
+    def get_articles_by_catalog(self, abc_catalogs):
+        for c_number in abc_catalogs:
+            print(f'Номер каталога: {c_number}')
+            page_number = 1
+            while True:
+                print(f'Номер страницы: {page_number}')
+                self.page.goto(f'https://www.officemag.ru/catalog/{c_number}/?SORT=SORT&COUNT=60&PAGEN_1={page_number}')
+                self.page.wait_for_load_state('load')
+                # Получаем текст на странице
+                page_text = self.page.inner_text('body')
+                if "Товары не найдены" in page_text:
+                    print("Товары не найдены")
+                    break
+                else:
+                    # Находим все элементы с классом "name", чтобы извлечь ссылки в дальнейшем
+                    elements = self.page.query_selector_all('.name')
+                    for element in elements:
+                        link = element.query_selector('a')
+                        if link:
+                            href = link.get_attribute('href')
+                            self.links.append(href)
+
+                    # Получим HTML-код страницы
+                    page_content = self.page.content()
+                    # Используем BeautifulSoup для парсинга HTML
+                    soup = BeautifulSoup(page_content, 'html.parser')
+                    # list_items = soup.find('div', class_='listItemsWrapper js-tabsContentItems grid')
+                    # for item in list_items:
+                    # Проверка, не вышел ли товар из ассортимента
+                    listitembuy = soup.find_all('div', class_='listItemBuy')
+                    # Найдем все элементы с классом "pseudoLink"
+                    pseudo_links = soup.find_all('span', class_='pseudoLink')
+                    for pseudo_link in pseudo_links:
+                        print(pseudo_link)
+                        if 'Наличие в магазинах' in pseudo_link.text:
+                            # Извлекаем значение атрибута data-content-replace
+                            data_content_replace = pseudo_link.attrs['data-content-replace']
+                            # Парсим JSON
+                            data_content_replace_dict = json.loads(data_content_replace)
+                            self.stocks.append(data_content_replace_dict)
+                    page_number += 1
 
     def start(self):
         t1 = datetime.datetime.now()
@@ -106,8 +170,15 @@ class ParserOfficeMag:
                 self.page = self.context.new_page()
                 self.page.add_init_script(self.js)
                 self.login()
+                abc_catalogs = self.read_abc_catalogs()
+                self.get_articles_by_catalog(abc_catalogs=abc_catalogs)
+                # self.get_abc_catalog()
+                print()
         except Exception as exp:
             print(exp)
+            # Получить информацию о стеке вызовов
+            traceback_info = traceback.format_exc()
+            print("Информация о стеке вызовов:\n\n", traceback_info)
             # self.send_logs_to_telegram(message=f'Произошла ошибка!\n\n\n{exp}')
         t2 = datetime.datetime.now()
         print(f'Finish: {t2}, TIME: {t2 - t1}')
@@ -115,4 +186,5 @@ class ParserOfficeMag:
 
 
 if __name__ == '__main__':
+    current_directory = os.path.dirname(__file__) if '__file__' in locals() else os.getcwd()
     ParserOfficeMag().start()
