@@ -43,6 +43,22 @@ def my_decorator(func):
     return wrapper
 
 
+def clear_price(price):
+    """Очищаем цену от посторонних запахов и приводим к типу int"""
+    if ',' in price:
+        price = price.split(',')[0].replace(u'\xa0', '')
+        return price
+    else:
+        price = price.replace(u'\xa0', '')
+        return price
+
+
+def clear_text(text_for_clear):
+    """Очищаем текст от шт, точек, пробелов, плюсов и пр."""
+    text_for_clear = text_for_clear.replace('шт.', '').replace(' ', '').replace(u'\xa0', '').replace('+', '')
+    return text_for_clear
+
+
 class ParserOfficeMag:
     def __init__(self):
         self.links = []  # ссылки на товары, полученные из ссылок на каталоги
@@ -119,6 +135,7 @@ class ParserOfficeMag:
         print()
 
     def get_articles_by_catalog(self, abc_catalogs):
+        "Находим все ссылки на артикулы из каталога и обновляем остатки, т.к. они есть на странице каталога"
         for c_number in abc_catalogs:
             print(f'Номер каталога: {c_number}')
             page_number = 1
@@ -132,32 +149,83 @@ class ParserOfficeMag:
                     print("Товары не найдены")
                     break
                 else:
-                    # Находим все элементы с классом "name", чтобы извлечь ссылки в дальнейшем
-                    elements = self.page.query_selector_all('.name')
-                    for element in elements:
-                        link = element.query_selector('a')
-                        if link:
-                            href = link.get_attribute('href')
-                            self.links.append(href)
-
-                    # Получим HTML-код страницы
+                    "Получим HTML-код страницы для приготовления супа"
                     page_content = self.page.content()
                     # Используем BeautifulSoup для парсинга HTML
                     soup = BeautifulSoup(page_content, 'html.parser')
-                    # list_items = soup.find('div', class_='listItemsWrapper js-tabsContentItems grid')
-                    # for item in list_items:
-                    # Проверка, не вышел ли товар из ассортимента
-                    listitembuy = soup.find_all('div', class_='listItemBuy')
-                    # Найдем все элементы с классом "pseudoLink"
-                    pseudo_links = soup.find_all('span', class_='pseudoLink')
-                    for pseudo_link in pseudo_links:
-                        print(pseudo_link)
-                        if 'Наличие в магазинах' in pseudo_link.text:
+                    "Найдем блок, содержащий элементы товаров"
+                    list_items = soup.find_all('div', class_='listItem__content')
+
+                    for content_item in list_items:
+                        # Найдем статус товара (в наличии, Выведен из ассортимента и т.д.)
+                        product_status = content_item.find('div', class_='listItemBuy__available').contents[1].attrs[
+                            'class']
+                        if 'ProductState--assortmentRemoved' in product_status:
+                            print(f'Товар выведен из ассортимента')
+                            break
+                        if 'ProductState--outStock' in product_status:
+                            print('ProductState--outStock')
+                            break
+                        if 'ProductState--green' in product_status:
+                            print('ProductState--green')
+
+                            "Найдем код (артикул) товара"
+                            code = content_item.find('span', class_='code').text.replace('Код ', '')
+                            if code == '630680':
+                                print()
+                            print(f'code = {code}')
+
+                            "Найдем название товара"
+                            name = content_item.find('div', class_='name').text.strip()
+
+                            "Найдем url товара"
+                            url = content_item.find('div', class_='name').contents[1].attrs['href']
+                            print()
+
+                            "Найдем цену товара"
+                            # Специальная цена (если цена указана от нескольких штук, то уходим внутрь и достаем цену
+                            # за 1 шт.)
+                            special_price = content_item.find('div', class_='ProductSpecial js-productSpecial')
+                            if special_price:
+                                price = special_price.find('span', class_='Price__count').text
+                                price = clear_price(price)
+                            else:
+                                price = content_item.find('span', class_='Price Price--best').text
+                                price = clear_price(price)
+                            print()
+
+                            "Найдем остатки товара"
+                            stocks = content_item.find('span', class_='pseudoLink')
                             # Извлекаем значение атрибута data-content-replace
-                            data_content_replace = pseudo_link.attrs['data-content-replace']
+                            stocks_data_content = stocks.attrs['data-content-replace']
                             # Парсим JSON
-                            data_content_replace_dict = json.loads(data_content_replace)
-                            self.stocks.append(data_content_replace_dict)
+                            stocks_data_content_dict = json.loads(stocks_data_content)
+                            # Проверяем статус остатков на Красноармейской (omr_20C)
+                            if stocks_data_content_dict['omr_20C'] == 'green':
+                                stocks_krasnoarmeiskaya = int(clear_text(stocks_data_content_dict['omr_20T']))
+                            else:
+                                stocks_krasnoarmeiskaya = 0
+                            # Проверяем статус остатков на Советской (omr_102C)
+                            if stocks_data_content_dict['omr_102C'] == 'green':
+                                stocks_sovetskaya = int(clear_text(stocks_data_content_dict['omr_102T']))
+                            else:
+                                stocks_sovetskaya = 0
+                            # Проверяем статус остатков на удаленном складе (svhC)
+                            if stocks_data_content_dict['svhC'] == 'green':
+                                stocks_remote_warehouse = int(clear_text(stocks_data_content_dict['svhT']))
+                            else:
+                                stocks_remote_warehouse = 0
+                            print()
+
+                    # # Находим все элементы с классом "name", чтобы извлечь ссылки в дальнейшем
+                    # elements = self.page.query_selector_all('.name')
+                    # for element in elements:
+                    #     link = element.query_selector('a')
+                    #     if link:
+                    #         href = link.get_attribute('href')
+                    #         self.links.append(href)
+                    #
+
                     page_number += 1
 
     def start(self):
