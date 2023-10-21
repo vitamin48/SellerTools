@@ -54,6 +54,8 @@ def clear_price(price):
 
 
 def clear_text(text_for_clear):
+    if text_for_clear == 0:
+        return 0
     """Очищаем текст от шт, точек, пробелов, плюсов и пр."""
     text_for_clear = text_for_clear.replace('шт.', '').replace(' ', '').replace(u'\xa0', '').replace('+', '')
     return text_for_clear
@@ -61,6 +63,7 @@ def clear_text(text_for_clear):
 
 class ParserOfficeMag:
     def __init__(self):
+        self.result_data = []
         self.links = []  # ссылки на товары, полученные из ссылок на каталоги
         self.stocks = []
         self.stocks_krasnoarmeyskaya = []
@@ -112,10 +115,15 @@ class ParserOfficeMag:
 
     def login(self):
         print(f'{bcolors.OKGREEN}login{bcolors.ENDC}')
-        self.page.goto(self.__main_url)
+        # self.page.set_viewport_size({"width": 1000, "height": 800})
+        # self.page.goto(self.__main_url)
+        self.page.goto('https://www.officemag.ru/auth/')
         login = self.read_login_from_txt()[0]
         my_pass = self.read_login_from_txt()[1]
-        self.page.get_by_text("Вход").click()
+        time.sleep(1)
+        self.page.keyboard.press("Escape")
+        time.sleep(1)
+        # self.page.get_by_text("Вход").click()
         # Находим поле ввода по его id
         input_login = self.page.locator('#USER_LOGIN')
         # Вводим текст в поле ввода
@@ -132,21 +140,20 @@ class ParserOfficeMag:
     def get_abc_catalog(self):
         self.page.goto('https://www.officemag.ru/catalog/abc/')
         abc = self.page.locator('.catalogAlphabetList threeColumns')
-        print()
 
     def get_articles_by_catalog(self, abc_catalogs):
         "Находим все ссылки на артикулы из каталога и обновляем остатки, т.к. они есть на странице каталога"
         for c_number in abc_catalogs:
-            print(f'Номер каталога: {c_number}')
+            print(f'{bcolors.OKGREEN}Номер каталога: {c_number}{bcolors.ENDC}')
             page_number = 1
             while True:
-                print(f'Номер страницы: {page_number}')
+                print(f'{bcolors.BOLD}Номер страницы: {page_number}{bcolors.ENDC}')
                 self.page.goto(f'https://www.officemag.ru/catalog/{c_number}/?SORT=SORT&COUNT=60&PAGEN_1={page_number}')
                 self.page.wait_for_load_state('load')
                 # Получаем текст на странице
                 page_text = self.page.inner_text('body')
                 if "Товары не найдены" in page_text:
-                    print("Товары не найдены")
+                    print(f'{bcolors.WARNING}Товары не найдены{bcolors.ENDC}')
                     break
                 else:
                     "Получим HTML-код страницы для приготовления супа"
@@ -157,22 +164,24 @@ class ParserOfficeMag:
                     list_items = soup.find_all('div', class_='listItem__content')
 
                     for content_item in list_items:
+                        "Найдем код (артикул) товара"
+                        code = content_item.find('span', class_='code').text.replace('Код ', '')
                         # Найдем статус товара (в наличии, Выведен из ассортимента и т.д.)
                         product_status = content_item.find('div', class_='listItemBuy__available').contents[1].attrs[
                             'class']
                         if 'ProductState--assortmentRemoved' in product_status:
-                            print(f'Товар выведен из ассортимента')
+                            print(f'{bcolors.WARNING}Товар {code} выведен из ассортимента{bcolors.ENDC}')
                             break
                         if 'ProductState--outStock' in product_status:
-                            print('ProductState--outStock')
+                            print(f'{bcolors.WARNING}Товар {code} временно отсутствует на складе{bcolors.ENDC}')
                             break
                         if 'ProductState--green' in product_status:
-                            print('ProductState--green')
+                            # print('ProductState--green')
 
-                            "Найдем код (артикул) товара"
-                            code = content_item.find('span', class_='code').text.replace('Код ', '')
-                            if code == '630680':
-                                print()
+                            # "Найдем код (артикул) товара"
+                            # code = content_item.find('span', class_='code').text.replace('Код ', '')
+                            # if code == '630680':
+                            #     print()
                             print(f'code = {code}')
 
                             "Найдем название товара"
@@ -180,52 +189,65 @@ class ParserOfficeMag:
 
                             "Найдем url товара"
                             url = content_item.find('div', class_='name').contents[1].attrs['href']
-                            print()
 
                             "Найдем цену товара"
                             # Специальная цена (если цена указана от нескольких штук, то уходим внутрь и достаем цену
                             # за 1 шт.)
+                            price_best = content_item.find('span', class_='Price Price--best')
+                            price_ = content_item.find('span', class_='Price')
                             special_price = content_item.find('div', class_='ProductSpecial js-productSpecial')
-                            if special_price:
+                            if price_best and special_price is None:
+                                price = price_best.text
+                                price = clear_price(price)
+                            elif special_price:
                                 price = special_price.find('span', class_='Price__count').text
                                 price = clear_price(price)
-                            else:
-                                price = content_item.find('span', class_='Price Price--best').text
+                            elif price_best is None and price_:
+                                price = price_.text
                                 price = clear_price(price)
-                            print()
+                            else:
+                                print(f'{bcolors.FAIL}непонятки с ценой{bcolors.ENDC}')
 
                             "Найдем остатки товара"
                             stocks = content_item.find('span', class_='pseudoLink')
-                            # Извлекаем значение атрибута data-content-replace
-                            stocks_data_content = stocks.attrs['data-content-replace']
-                            # Парсим JSON
-                            stocks_data_content_dict = json.loads(stocks_data_content)
-                            # Проверяем статус остатков на Красноармейской (omr_20C)
-                            if stocks_data_content_dict['omr_20C'] == 'green':
-                                stocks_krasnoarmeiskaya = int(clear_text(stocks_data_content_dict['omr_20T']))
-                            else:
-                                stocks_krasnoarmeiskaya = 0
-                            # Проверяем статус остатков на Советской (omr_102C)
-                            if stocks_data_content_dict['omr_102C'] == 'green':
-                                stocks_sovetskaya = int(clear_text(stocks_data_content_dict['omr_102T']))
-                            else:
-                                stocks_sovetskaya = 0
-                            # Проверяем статус остатков на удаленном складе (svhC)
-                            if stocks_data_content_dict['svhC'] == 'green':
-                                stocks_remote_warehouse = int(clear_text(stocks_data_content_dict['svhT']))
-                            else:
-                                stocks_remote_warehouse = 0
-                            print()
-
-                    # # Находим все элементы с классом "name", чтобы извлечь ссылки в дальнейшем
-                    # elements = self.page.query_selector_all('.name')
-                    # for element in elements:
-                    #     link = element.query_selector('a')
-                    #     if link:
-                    #         href = link.get_attribute('href')
-                    #         self.links.append(href)
-                    #
-
+                            if 'data-content-replace' in stocks.attrs:  # товар есть, или нет, но он доступен к заказу
+                                # Извлекаем значение атрибута data-content-replace
+                                stocks_data_content = stocks.attrs['data-content-replace']
+                                # Парсим JSON
+                                stocks_data_content_dict = json.loads(stocks_data_content)
+                                # Проверяем статус остатков на Красноармейской (omr_20C)
+                                if stocks_data_content_dict['omr_20C'] == 'green':
+                                    stocks_krasnoarmeiskaya = int(clear_text(stocks_data_content_dict['omr_20T']))
+                                else:
+                                    stocks_krasnoarmeiskaya = 0
+                                # Проверяем статус остатков на Советской (omr_102C)
+                                if stocks_data_content_dict['omr_102C'] == 'green':
+                                    stocks_sovetskaya = int(clear_text(stocks_data_content_dict['omr_102T']))
+                                else:
+                                    stocks_sovetskaya = 0
+                                # Проверяем статус остатков на удаленном складе (svhC)
+                                if 'svhC' in stocks_data_content_dict and stocks_data_content_dict['svhC'] == 'green':
+                                    stocks_remote_warehouse = int(clear_text(stocks_data_content_dict['svhT']))
+                                else:
+                                    stocks_remote_warehouse = 0
+                            else:  # товара нет и он недоступен к заказу
+                                print(f'товара {code} нет и он недоступен к заказу, но может быть на складе')
+                                stocks_krasnoarmeiskaya = stocks_sovetskaya = stocks_remote_warehouse = 0
+                                # Проверяем статус остатков в наличии на складе
+                            pt = (content_item.find('div', class_='listItemBuy__available')
+                                  .find('table', class_='AvailabilityList')
+                                  .find_all('td', class_='AvailabilityBox'))
+                            stocks_warehouse = pt[1].text if 'Наличие на складе' in pt[0].text else 0
+                            stocks_warehouse = int(clear_text(stocks_warehouse))
+                        res_content_item_dict = {'code': code, 'name': name, 'price': int(price),
+                                                 'stocks_krasnoarmeiskaya': stocks_krasnoarmeiskaya,
+                                                 'stocks_sovetskaya': stocks_sovetskaya,
+                                                 'stocks_warehouse': stocks_warehouse,
+                                                 'stocks_remote_warehouse': stocks_remote_warehouse,
+                                                 'url': url
+                                                 }
+                        self.result_data.append(res_content_item_dict)
+                        # print()
                     page_number += 1
 
     def start(self):
