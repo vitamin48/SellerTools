@@ -1,3 +1,8 @@
+"""
+Быстрое обновление остатков ОФИСМАГ
+Скрипт считывает номер каталога, прогружает все его страницы и собирает: артикул, url, название, остатки.
+"""
+import pickle
 from bs4 import BeautifulSoup
 import re
 import os
@@ -143,7 +148,7 @@ class ParserOfficeMag:
 
     def get_articles_by_catalog(self, abc_catalogs):
         "Находим все ссылки на артикулы из каталога и обновляем остатки, т.к. они есть на странице каталога"
-        for c_number in abc_catalogs:
+        for c_number in tqdm(abc_catalogs):
             print(f'{bcolors.OKGREEN}Номер каталога: {c_number}{bcolors.ENDC}')
             page_number = 1
             while True:
@@ -206,7 +211,7 @@ class ParserOfficeMag:
                                 price = price_.text
                                 price = clear_price(price)
                             else:
-                                print(f'{bcolors.FAIL}непонятки с ценой{bcolors.ENDC}')
+                                print(f'{bcolors.FAIL}непонятки с ценой ({code}) {bcolors.ENDC}')
 
                             "Найдем остатки товара"
                             stocks = content_item.find('span', class_='pseudoLink')
@@ -231,24 +236,76 @@ class ParserOfficeMag:
                                 else:
                                     stocks_remote_warehouse = 0
                             else:  # товара нет и он недоступен к заказу
-                                print(f'товара {code} нет и он недоступен к заказу, но может быть на складе')
+                                # print(f'товара {code} нет и он недоступен к заказу, но может быть на складе')
                                 stocks_krasnoarmeiskaya = stocks_sovetskaya = stocks_remote_warehouse = 0
+                            try:
                                 # Проверяем статус остатков в наличии на складе
-                            pt = (content_item.find('div', class_='listItemBuy__available')
-                                  .find('table', class_='AvailabilityList')
-                                  .find_all('td', class_='AvailabilityBox'))
-                            stocks_warehouse = pt[1].text if 'Наличие на складе' in pt[0].text else 0
-                            stocks_warehouse = int(clear_text(stocks_warehouse))
-                        res_content_item_dict = {'code': code, 'name': name, 'price': int(price),
-                                                 'stocks_krasnoarmeiskaya': stocks_krasnoarmeiskaya,
-                                                 'stocks_sovetskaya': stocks_sovetskaya,
-                                                 'stocks_warehouse': stocks_warehouse,
-                                                 'stocks_remote_warehouse': stocks_remote_warehouse,
-                                                 'url': url
+                                pt = (content_item.find('div', class_='listItemBuy__available')
+                                      .find('table', class_='AvailabilityList')
+                                      .find_all('td', class_='AvailabilityBox'))
+                                if len(pt) == 2:
+                                    stocks_warehouse = pt[1].text if 'Наличие на складе' in pt[0].text else 0
+                                    stocks_warehouse = int(clear_text(stocks_warehouse))
+                                    stocks_remote_warehouse = pt[1].text if 'Под заказ' in pt[0].text else 0
+                                    stocks_remote_warehouse = int(clear_text(stocks_remote_warehouse))
+                                if len(pt) == 4:
+                                    stocks_warehouse = pt[1].text if 'Наличие на складе' in pt[0].text else 0
+                                    stocks_warehouse = int(clear_text(stocks_warehouse))
+                                    stocks_remote_warehouse = pt[3].text if 'Под заказ' in pt[2].text else 0
+                                    stocks_remote_warehouse = int(clear_text(stocks_remote_warehouse))
+                            except Exception as exp:
+                                print(f'{bcolors.WARNING}Случай, когда товара ({code}) нет ни на складе в Брянск, ни на'
+                                      f' удаленном складе{bcolors.ENDC} \n\n'
+                                      f'Ошибка: \n\n{exp}\n')
+                                stocks_warehouse = stocks_remote_warehouse = 0
+                        res_content_item_dict = {'Артикул': f'goods_{code}', 'Название': name,
+                                                 'Цена в магазине': int(price),
+                                                 'Цена для продажи': round(int(price) * 3.3),
+                                                 'Сумма остатков на Красноармейской и Советской': int(
+                                                     stocks_krasnoarmeiskaya) + int(stocks_sovetskaya),
+                                                 'Остатки на Красноармейской': stocks_krasnoarmeiskaya,
+                                                 'Остатки на Советской': stocks_sovetskaya,
+                                                 'Остатки на складе в Брянске': stocks_warehouse,
+                                                 'Под заказ': stocks_remote_warehouse,
+                                                 'url': f'https://www.officemag.ru{url}'
                                                  }
                         self.result_data.append(res_content_item_dict)
+                        pickle.dump(self.result_data, open('result_data.sav', 'wb'))
                         # print()
+                    # create_xls_by_dict(self.result_data)
                     page_number += 1
+
+    def create_xls(self, df):
+        """Создание файла excel из 1-го DataFrame"""
+        abc_catalogs = self.read_abc_catalogs()
+        file_name = f'OM_Stocks_{abc_catalogs[0]}_{abc_catalogs[-1]}.xlsx'
+        writer = pd.ExcelWriter(file_name, engine_kwargs={'options': {'strings_to_urls': False}})
+        df.to_excel(writer, sheet_name='Остатки Офисмаг', index=False, na_rep='NaN', engine='openpyxl')
+        # Auto-adjust columns'
+        for column in df:
+            column_width = max(df[column].astype(str).map(len).max(), len(column)) + 2
+            col_idx = df.columns.get_loc(column)
+            writer.sheets[f'{"Остатки Офисмаг"}'].set_column(col_idx, col_idx, column_width)
+        # writer.sheets["OZON"].set_column(1, 1, 30)
+        writer.close()
+        print(f'{bcolors.OKGREEN}Успешно создан файл: {file_name}{bcolors.ENDC}')
+
+    def send_logs_to_telegram(self, message):
+        import platform
+        import socket
+        import os
+
+        platform = platform.system()
+        hostname = socket.gethostname()
+        user = os.getlogin()
+
+        bot_token = '6456958617:AAF8thQveHkyLLtWtD02Rq1UqYuhfT4LoTc'
+        chat_id = '128592002'
+
+        url = f'https://api.telegram.org/bot{bot_token}/sendMessage'
+        data = {"chat_id": chat_id, "text": message + f'\n\n{platform}\n{hostname}\n{user}'}
+        response = requests.post(url, data=data)
+        return response.json()
 
     def start(self):
         t1 = datetime.datetime.now()
@@ -257,11 +314,15 @@ class ParserOfficeMag:
             with sync_playwright() as playwright:
                 self.browser = playwright.chromium.launch(headless=False, args=['--blink-settings=imagesEnabled=false'])
                 self.context = self.browser.new_context()
+                # self.context.tracing.start(screenshots=True, snapshots=True, sources=True)
                 self.page = self.context.new_page()
                 self.page.add_init_script(self.js)
                 self.login()
                 abc_catalogs = self.read_abc_catalogs()
                 self.get_articles_by_catalog(abc_catalogs=abc_catalogs)
+                # self.context.tracing.stop(path="trace.zip")
+                df = pd.DataFrame(self.result_data)
+                self.create_xls(df)
                 # self.get_abc_catalog()
                 print()
         except Exception as exp:
@@ -269,10 +330,10 @@ class ParserOfficeMag:
             # Получить информацию о стеке вызовов
             traceback_info = traceback.format_exc()
             print("Информация о стеке вызовов:\n\n", traceback_info)
-            # self.send_logs_to_telegram(message=f'Произошла ошибка!\n\n\n{exp}')
+            self.send_logs_to_telegram(message=f'Произошла ошибка!\n\n\n{exp}')
         t2 = datetime.datetime.now()
         print(f'Finish: {t2}, TIME: {t2 - t1}')
-        # self.send_logs_to_telegram(message=f'Finish: {t2}, TIME: {t2 - t1}')
+        self.send_logs_to_telegram(message=f'Finish: {t2}, TIME: {t2 - t1}')
 
 
 if __name__ == '__main__':
